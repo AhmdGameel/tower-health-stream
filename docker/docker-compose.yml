@@ -1,0 +1,291 @@
+services:
+
+  kafka:
+    image: apache/kafka:4.0.0
+    container_name: ths-kafka
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,INTERNAL://0.0.0.0:29092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,INTERNAL://kafka:29092
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_HEAP_OPTS: "-Xmx512M -Xms256M"
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  kafka-init:
+    image: apache/kafka:4.0.0
+    container_name: ths-kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        echo "Creating Kafka topics..."
+        for topic in tower_events:3 valid_events:3 dead_letter_queue:1 tower_alerts:3 regional_outages:3 enriched_alerts:3; do
+          name=$${topic%%:*}
+          parts=$${topic##*:}
+          /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 \
+            --create --if-not-exists --topic "$$name" --partitions "$$parts" --replication-factor 1
+        done
+        echo "Kafka topics ready:"
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --list
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: ths-kafka-ui
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: tower-health-stream
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+  flink-jobmanager:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.flink
+    container_name: ths-flink-jobmanager
+    ports:
+      - "8081:8081"
+    environment:
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: flink-jobmanager
+        jobmanager.memory.process.size: 768m
+    command: jobmanager
+    volumes:
+      - ../flink_jobs:/opt/flink/jobs:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8081/overview >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  flink-taskmanager:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.flink
+    container_name: ths-flink-taskmanager
+    environment:
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: flink-jobmanager
+        taskmanager.numberOfTaskSlots: 4
+        taskmanager.memory.process.size: 1024m
+    command: taskmanager
+    volumes:
+      - ../flink_jobs:/opt/flink/jobs:ro
+    depends_on:
+      flink-jobmanager:
+        condition: service_healthy
+
+  flink-job-submitter:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.flink
+    container_name: ths-flink-submitter
+    depends_on:
+      flink-jobmanager:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      OUTAGE_WINDOW_MINUTES: ${OUTAGE_WINDOW_MINUTES:-2}
+    volumes:
+      - ../flink_jobs:/opt/flink/jobs:ro
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        echo "Waiting for Flink TaskManager slot availability..."
+        until curl -sf http://flink-jobmanager:8081/overview | grep -q '"slots-available":[1-9]'; do
+          sleep 2
+        done
+        echo "Submitting Flink Data Quality job..."
+        flink run -d -m flink-jobmanager:8081 -py /opt/flink/jobs/data_quality.py
+        echo "Submitting Flink Anomaly Detection job..."
+        flink run -d -m flink-jobmanager:8081 -py /opt/flink/jobs/anomaly_detection.py
+        echo "Flink jobs submitted."
+
+  iceberg-rest:
+    image: tabulario/iceberg-rest:latest
+    container_name: ths-iceberg-rest
+    user: "0:0"
+    ports:
+      - "8182:8181"
+    environment:
+      CATALOG_WAREHOUSE: /opt/iceberg/warehouse
+      CATALOG_IO__IMPL: org.apache.iceberg.hadoop.HadoopFileIO
+    volumes:
+      - iceberg_data:/opt/iceberg/warehouse
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: ths-postgres
+    ports:
+      - "${POSTGRES_PORT:-5434}:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-telecom}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-telecom}
+      POSTGRES_DB: ${POSTGRES_DB:-telecom_analytics}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-telecom} -d ${POSTGRES_DB:-telecom_analytics}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    container_name: ths-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GF_SECURITY_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer"
+      POSTGRES_DB: ${POSTGRES_DB:-telecom_analytics}
+      POSTGRES_USER: ${POSTGRES_USER:-telecom}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-telecom}
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # --- Streaming & Lakehouse Python Services ---
+
+  tower-simulator:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.python
+    container_name: ths-simulator
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      TOWERS_CSV_PATH: /app/data/towers_clean.csv
+      SIMULATOR_INTERVAL_SEC: ${SIMULATOR_INTERVAL_SEC:-5}
+      SIMULATOR_BATCH_LIMIT: ${SIMULATOR_BATCH_LIMIT:-2000}
+      SIMULATOR_ANOMALY_RATE: ${SIMULATOR_ANOMALY_RATE:-0.05}
+      SIMULATOR_BAD_DATA_RATE: ${SIMULATOR_BAD_DATA_RATE:-0.01}
+    volumes:
+      - ../data:/app/data:ro
+    command: ["python", "simulator/tower_simulator.py"]
+    restart: unless-stopped
+
+  weather-enrichment:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.python
+    container_name: ths-weather-enrichment
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      WEATHER_CACHE_TTL_SEC: ${WEATHER_CACHE_TTL_SEC:-900}
+      WEATHER_GRID_PRECISION: ${WEATHER_GRID_PRECISION:-1}
+    command: ["python", "services/weather_enrichment.py"]
+    restart: unless-stopped
+
+  postgres-sink:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.python
+    container_name: ths-postgres-sink
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-telecom_analytics}
+      POSTGRES_USER: ${POSTGRES_USER:-telecom}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-telecom}
+    command: ["python", "services/postgres_sink.py"]
+    restart: unless-stopped
+
+  iceberg-sink:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.python
+    container_name: ths-iceberg-sink
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      iceberg-rest:
+        condition: service_started
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      ICEBERG_REST_URI: http://iceberg-rest:8181
+      ICEBERG_BATCH_SIZE: ${ICEBERG_BATCH_SIZE:-5000}
+      ICEBERG_FLUSH_INTERVAL_SEC: ${ICEBERG_FLUSH_INTERVAL_SEC:-30}
+    volumes:
+      - iceberg_data:/opt/iceberg/warehouse
+    command: ["python", "services/iceberg_sink.py"]
+    restart: unless-stopped
+
+  analytics-runner:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.python
+    container_name: ths-analytics-runner
+    depends_on:
+      iceberg-sink:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    environment:
+      ICEBERG_REST_URI: http://iceberg-rest:8181
+      TOWERS_CSV_PATH: /app/data/towers_clean.csv
+      DUCKDB_PATH: /tmp/tower_health.duckdb
+      DBT_PROJECT_DIR: /app/dbt_project
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-telecom_analytics}
+      POSTGRES_USER: ${POSTGRES_USER:-telecom}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-telecom}
+      ANALYTICS_REFRESH_INTERVAL_SEC: ${ANALYTICS_REFRESH_INTERVAL_SEC:-300}
+    volumes:
+      - ../data:/app/data:ro
+      - iceberg_data:/opt/iceberg/warehouse:ro
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        echo "Waiting 45s for initial Iceberg commit before first dbt run..."
+        sleep 45
+        while true; do
+          python services/analytics_runner.py || echo "Analytics run failed, will retry next cycle"
+          sleep "$${ANALYTICS_REFRESH_INTERVAL_SEC:-300}"
+        done
+    restart: unless-stopped
+
+volumes:
+  kafka_data:
+  iceberg_data:
+  postgres_data:
+  grafana_data:

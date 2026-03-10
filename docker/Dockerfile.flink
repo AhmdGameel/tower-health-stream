@@ -1,0 +1,21 @@
+FROM apache/flink:2.0.0
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    python3 \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -sf /usr/bin/python3 /usr/bin/python
+
+RUN pip3 install --no-cache-dir \
+    pandas \
+    ruamel.yaml
+
+# Download Kafka SQL connector JAR at build time (keeps binaries out of Git)
+RUN curl -fsSL \
+    https://repo1.maven.org/maven2/org/apache/flink/flink-sql-connector-kafka/4.0.1-2.0/flink-sql-connector-kafka-4.0.1-2.0.jar \
+    -o /opt/flink/lib/flink-sql-connector-kafka-4.0.1-2.0.jar
+
+ENV PYFLINK_PYTHON=/usr/bin/python3
+
+ENTRYPOINT ["/docker-entrypoint.sh"]
