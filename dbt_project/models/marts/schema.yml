@@ -1,0 +1,37 @@
+version: 2
+
+models:
+  - name: tower_health_scores
+    description: Per-tower health score combining real Iceberg telemetry (signal, drop rate, latency) and radio tech.
+    columns:
+      - name: tower_id
+        tests:
+          - not_null
+          - unique
+      - name: health_score
+        tests:
+          - not_null
+
+  - name: operator_performance
+    description: Operator-level KPIs ranked by average composite tower health score.
+    columns:
+      - name: operator
+        tests:
+          - not_null
+          - unique
+      - name: performance_rank
+        tests:
+          - not_null
+
+  - name: regional_risk_index
+    description: Geographic area risk index combining legacy infrastructure ratio and observed telemetry health.
+    columns:
+      - name: area
+        tests:
+          - not_null
+          - unique
+      - name: risk_level
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['LOW', 'MEDIUM', 'HIGH']

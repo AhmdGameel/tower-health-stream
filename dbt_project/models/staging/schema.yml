@@ -1,0 +1,31 @@
+version: 2
+
+models:
+  - name: stg_towers
+    description: Cleaned Egyptian cell tower inventory from OpenCelliD (MCC=602).
+    columns:
+      - name: tower_id
+        tests:
+          - not_null
+          - unique
+      - name: operator
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['Vodafone', 'e&', 'Orange', 'WE']
+      - name: radio
+        tests:
+          - not_null
+
+  - name: stg_telemetry
+    description: Validated real-time telemetry synced from Apache Iceberg (telecom.valid_events).
+    columns:
+      - name: tower_id
+        tests:
+          - not_null
+      - name: signal_strength
+        tests:
+          - not_null
+      - name: latency_ms
+        tests:
+          - not_null

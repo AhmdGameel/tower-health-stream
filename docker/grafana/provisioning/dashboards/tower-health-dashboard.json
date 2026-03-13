@@ -1,0 +1,117 @@
+{
+  "uid": "tower-health-stream",
+  "title": "Tower Health Stream — Egypt Telecom Intelligence",
+  "tags": ["telecom", "streaming", "kafka", "flink", "dbt"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5s",
+  "time": { "from": "now-15m", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "geomap",
+      "title": "Live Tower Alerts Map (Egypt)",
+      "gridPos": { "h": 11, "w": 14, "x": 0, "y": 0 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "telecom-postgres" },
+      "options": {
+        "view": { "id": "coords", "lat": 27.0, "lon": 30.8, "zoom": 5.5 },
+        "basemap": {
+          "type": "osm-standard",
+          "name": "OpenStreetMap"
+        },
+        "layers": [
+          {
+            "type": "markers",
+            "name": "Alerts",
+            "config": {
+              "style": {
+                "size": { "fixed": 6 },
+                "color": { "field": "signal_strength" },
+                "opacity": 0.85
+              }
+            },
+            "location": { "mode": "coords", "latitude": "lat", "longitude": "lon" }
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT tower_id, operator, alert_type, weather_impact, signal_strength, latency_ms, lat, lon, created_at FROM realtime_alerts ORDER BY created_at DESC LIMIT 300;"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "table",
+      "title": "Regional Outages (Flink Tumbling Window)",
+      "gridPos": { "h": 11, "w": 10, "x": 14, "y": 0 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "telecom-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT area, operator, affected_towers, avg_signal, avg_drop_rate, window_start, window_end FROM regional_outages ORDER BY created_at DESC LIMIT 50;"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "table",
+      "title": "Live Enriched Alerts (With Weather Impact)",
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 11 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "telecom-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT created_at, tower_id, operator, area, alert_type, signal_strength, latency_ms, call_drop_rate, weather_impact, temperature, wind_speed, rain, conclusion FROM realtime_alerts ORDER BY created_at DESC LIMIT 100;"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "barchart",
+      "title": "Operator Performance (dbt + Iceberg Telemetry)",
+      "gridPos": { "h": 9, "w": 8, "x": 0, "y": 20 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "telecom-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT operator, avg_health_score, lte_pct FROM operator_performance ORDER BY performance_rank;"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "table",
+      "title": "Lowest Health Towers (dbt Mart)",
+      "gridPos": { "h": 9, "w": 8, "x": 8, "y": 20 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "telecom-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT tower_id, operator, radio, event_count, avg_signal_dbm, avg_drop_rate_pct, health_score FROM tower_health_scores WHERE event_count > 0 ORDER BY health_score ASC LIMIT 25;"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "table",
+      "title": "Top High-Risk Regions (dbt Regional Risk Index)",
+      "gridPos": { "h": 9, "w": 8, "x": 16, "y": 20 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "telecom-postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT area, total_towers, lte_coverage_pct, observed_events, avg_health_score, risk_score, risk_level FROM regional_risk_index WHERE observed_events > 0 ORDER BY risk_score DESC LIMIT 25;"
+        }
+      ]
+    }
+  ]
+}

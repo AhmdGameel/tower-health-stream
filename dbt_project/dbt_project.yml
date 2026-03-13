@@ -1,0 +1,19 @@
+name: 'tower_health'
+version: '2.0.0'
+config-version: 2
+
+profile: 'tower_health'
+
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+
+models:
+  tower_health:
+    staging:
+      +materialized: view
+    marts:
+      +materialized: table

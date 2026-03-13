@@ -1,0 +1,7 @@
+tower_health:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: "{{ env_var('DUCKDB_PATH', '/app/data/tower_health.duckdb') }}"
+      threads: 4
