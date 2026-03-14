@@ -1,6 +1,6 @@
 {
   "uid": "tower-health-stream",
-  "title": "Tower Health Stream — Egypt Telecom Intelligence",
+  "title": "Tower Health Stream - Egypt Telecom Intelligence",
   "tags": ["telecom", "streaming", "kafka", "flink", "dbt"],
   "timezone": "browser",
   "schemaVersion": 39,
