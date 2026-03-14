@@ -11,10 +11,11 @@ Tower Health Stream implements a **Real-Time Lakehouse** pattern (Hot Path + Col
 - Injects configurable anomaly (~5%) and corrupted (~1%) rates to continuously exercise both alerting and the Dead Letter Queue.
 
 ### 2. Stream Quality & Anomaly Detection (`flink_jobs/`)
-- **`data_quality.py` (PyFlink Table API, `StatementSet`)**:
+- **`data_quality.py` (PyFlink Table API, `StatementSet`, `EXACTLY_ONCE` checkpointing every 30s)**:
   - Consumes `tower_events` once and routes valid records (`signal_strength BETWEEN -120 AND 0`, `latency_ms > 0`, `connected_users >= 0`, non-null keys/timestamps) to `valid_events`, and invalid/null records to `dead_letter_queue`.
-- **`anomaly_detection.py` (PyFlink Table API, `StatementSet`)**:
+- **`anomaly_detection.py` (PyFlink Table API, `StatementSet`, `EXACTLY_ONCE` checkpointing every 30s)**:
   - Parses `event_time AS TO_TIMESTAMP(ts, 'yyyy-MM-dd HH:mm:ss.SSS')` with a 10-second bounded out-of-orderness watermark.
+  - Persists stateful window checkpoints to `/opt/flink/checkpoints` so in-flight tumbling windows survive TaskManager restarts.
   - Routes tower-level alerts (`OVERLOADED`, `HIGH_DROP_RATE`, `WEAK_SIGNAL`, `HIGH_LATENCY`) to `tower_alerts`.
   - Runs a tumbling event-time window (`OUTAGE_WINDOW_MINUTES`, default 2m for local demo / configurable to 10m) grouped by `(area, operator)` to emit `REGIONAL_OUTAGE` events to a dedicated `regional_outages` topic when 3+ distinct towers degrade in the same window.
 
@@ -33,6 +34,7 @@ Tower Health Stream implements a **Real-Time Lakehouse** pattern (Hot Path + Col
   - Reads the latest ACID Iceberg snapshot via PyIceberg into DuckDB (`raw_iceberg_telemetry`).
   - Executes `dbt run` (2 staging views + 3 telemetry-driven mart tables) and `dbt test` (18 data quality assertions).
   - Exports the 3 mart tables into PostgreSQL using staging tables and an atomic rename swap so Grafana queries never see partial refreshes.
+  - Enforces a configurable hot-serving retention window (`POSTGRES_RETENTION_HOURS=168`, 7 days) on PostgreSQL `realtime_alerts` and `regional_outages`, while Apache Iceberg retains full historical telemetry.
 
 ### 5. Visualization (`docker/grafana/provisioning/`)
-- Grafana 11.4 auto-provisions the PostgreSQL datasource (`telecom-postgres`) and a 6-panel dashboard covering live geo-mapped alerts, regional outages, enriched alert logs, operator performance, lowest-health towers, and regional risk index.
+- Grafana 11.4 auto-provisions the PostgreSQL datasource (`telecom-postgres`) and a 10-panel NOC dashboard (4 top-level KPI stat cards, live OpenStreetMap geo-mapped alerts, regional outages, enriched alert logs, operator performance, lowest-health towers, and regional risk index).

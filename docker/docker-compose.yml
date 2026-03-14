@@ -71,6 +71,7 @@ services:
     command: jobmanager
     volumes:
       - ../flink_jobs:/opt/flink/jobs:ro
+      - flink_checkpoints:/opt/flink/checkpoints
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8081/overview >/dev/null"]
       interval: 10s
@@ -90,6 +91,7 @@ services:
     command: taskmanager
     volumes:
       - ../flink_jobs:/opt/flink/jobs:ro
+      - flink_checkpoints:/opt/flink/checkpoints
     depends_on:
       flink-jobmanager:
         condition: service_healthy
@@ -270,6 +272,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-telecom}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-telecom}
       ANALYTICS_REFRESH_INTERVAL_SEC: ${ANALYTICS_REFRESH_INTERVAL_SEC:-300}
+      POSTGRES_RETENTION_HOURS: ${POSTGRES_RETENTION_HOURS:-168}
     volumes:
       - ../data:/app/data:ro
       - iceberg_data:/opt/iceberg/warehouse:ro
@@ -289,3 +292,4 @@ volumes:
   iceberg_data:
   postgres_data:
   grafana_data:
+  flink_checkpoints:

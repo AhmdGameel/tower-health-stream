@@ -57,11 +57,11 @@ OpenCelliD Dataset (10,192 Egyptian towers)
 | Layer | Technology | Why it's here |
 |---|---|---|
 | **Message Broker** | Apache Kafka 4.0 (KRaft) | Decouples producers from consumers, buffers spikes, enables multi-consumer fan-out (Flink + Iceberg) without ZooKeeper overhead. |
-| **Stream Processing** | Apache Flink 2.0 (PyFlink SQL) | Stateful event-time processing with watermarks and tumbling windows to detect `REGIONAL_OUTAGE` (3+ degraded towers in the same area). Uses `StatementSet` so each job reads its Kafka source once. |
+| **Stream Processing** | Apache Flink 2.0 (PyFlink SQL) | Stateful event-time processing with watermarks, tumbling windows (`REGIONAL_OUTAGE` for 3+ degraded towers), `EXACTLY_ONCE` checkpointing every 30s, and `StatementSet` single-read fan-out. |
 | **Weather Enrichment** | Python Service + Spatial TTL Cache | Calls Open-Meteo per rounded `(lat, lon)` grid cell with a 15-minute TTL cache, cutting external API calls by >90% and avoiding rate limits / consumer lag. |
-| **Lakehouse Storage** | Apache Iceberg (REST Catalog) | ACID open table format for historical `valid_events`, partitioned by `(event_date, operator)` with batched 5,000-row / 30s flushes to prevent the small-files problem. |
-| **Batch Analytics** | DuckDB + dbt-core | Reads the latest Iceberg snapshot via PyIceberg, builds staging + mart models (`tower_health_scores`, `operator_performance`, `regional_risk_index`) from **real telemetry**, validates 18 dbt data tests, and atomically swaps tables in PostgreSQL. |
-| **Serving & BI** | PostgreSQL 16 + Grafana 11.4 | Low-latency operational serving layer for both real-time alerts and batch marts. Grafana datasource and 6-panel dashboard are fully auto-provisioned via code. |
+| **Lakehouse Storage** | Apache Iceberg (REST Catalog) | ACID open table format for full historical `valid_events`, partitioned by `(event_date, operator)` with batched 5,000-row / 30s flushes to prevent the small-files problem. |
+| **Batch Analytics** | DuckDB + dbt-core | Reads the latest Iceberg snapshot via PyIceberg, builds staging + mart models (`tower_health_scores`, `operator_performance`, `regional_risk_index`) from **real telemetry**, validates 18 dbt data tests, atomically swaps tables in PostgreSQL, and prunes hot alerts older than 7 days. |
+| **Serving & BI** | PostgreSQL 16 + Grafana 11.4 | Low-latency operational serving layer (7-day rolling retention for live alerts + dbt marts). Grafana datasource and 10-panel NOC dashboard (4 KPI stat cards + map + tables + charts) are auto-provisioned via code. |
 
 > **Why no Airflow?** This pipeline is streaming-first; the batch layer is a single scheduled `analytics_runner.py` job (`Iceberg -> DuckDB -> dbt -> Postgres`). Running a full Airflow deployment for one task would add unnecessary operational overhead. If batch dependencies grow in production, the runner script can be triggered directly as an Airflow task with zero code changes.
 

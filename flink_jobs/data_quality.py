@@ -9,6 +9,9 @@ settings = EnvironmentSettings.new_instance().in_streaming_mode().build()
 t_env = StreamTableEnvironment.create(environment_settings=settings)
 t_env.get_config().set("pipeline.name", "Tower Health - Data Quality")
 t_env.get_config().set("parallelism.default", "1")
+t_env.get_config().set("execution.checkpointing.interval", "30s")
+t_env.get_config().set("execution.checkpointing.mode", "EXACTLY_ONCE")
+t_env.get_config().set("state.checkpoints.dir", "file:///opt/flink/checkpoints/data_quality")
 t_env.get_config().set(
     "pipeline.jars",
     "file:///opt/flink/lib/flink-sql-connector-kafka-4.0.1-2.0.jar",

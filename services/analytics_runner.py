@@ -22,6 +22,7 @@ log = logging.getLogger(__name__)
 ICEBERG_REST_URI = os.getenv("ICEBERG_REST_URI", "http://localhost:8182")
 DUCKDB_PATH = os.getenv("DUCKDB_PATH", "/app/data/tower_health.duckdb")
 DBT_PROJECT_DIR = os.getenv("DBT_PROJECT_DIR", "/app/dbt_project")
+POSTGRES_RETENTION_HOURS = int(os.getenv("POSTGRES_RETENTION_HOURS", "168"))  # 7 days hot serving retention
 
 DB_CONFIG = dict(
     host=os.getenv("POSTGRES_HOST", "localhost"),
@@ -113,6 +114,34 @@ def export_marts_to_postgres() -> None:
         duck.close()
 
 
+def enforce_postgres_retention() -> None:
+    """Keep PostgreSQL lean for fast Grafana queries; full history lives in Apache Iceberg."""
+    pg = psycopg2.connect(**DB_CONFIG)
+    pg.autocommit = False
+    try:
+        with pg.cursor() as cur:
+            cur.execute(
+                "DELETE FROM realtime_alerts WHERE created_at < NOW() - (%s || ' hours')::INTERVAL",
+                (POSTGRES_RETENTION_HOURS,),
+            )
+            deleted_alerts = cur.rowcount
+            cur.execute(
+                "DELETE FROM regional_outages WHERE created_at < NOW() - (%s || ' hours')::INTERVAL",
+                (POSTGRES_RETENTION_HOURS,),
+            )
+            deleted_outages = cur.rowcount
+        pg.commit()
+        log.info(
+            "Retention policy (%dh): pruned %d old alerts and %d old outages from PostgreSQL",
+            POSTGRES_RETENTION_HOURS, deleted_alerts, deleted_outages,
+        )
+    except Exception as exc:
+        pg.rollback()
+        log.warning("Skipping retention pruning: %s", exc)
+    finally:
+        pg.close()
+
+
 def main() -> None:
     row_count = sync_iceberg_to_duckdb()
     if row_count == 0:
@@ -120,6 +149,7 @@ def main() -> None:
         sys.exit(0)
     run_dbt()
     export_marts_to_postgres()
+    enforce_postgres_retention()
     log.info("Batch analytics refresh completed successfully.")
 
 

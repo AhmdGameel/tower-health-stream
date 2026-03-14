@@ -4,15 +4,102 @@
   "tags": ["telecom", "streaming", "kafka", "flink", "dbt"],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "refresh": "5s",
   "time": { "from": "now-15m", "to": "now" },
   "panels": [
     {
+      "id": 10,
+      "type": "stat",
+      "title": "Alerts (Last 15m)",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "telecom-postgres" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 500 }, { "color": "red", "value": 2000 }] }
+        }
+      },
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT COUNT(*) AS alerts_15m FROM realtime_alerts WHERE created_at >= NOW() - INTERVAL '15 minutes';"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "stat",
+      "title": "Regional Outages (Last 15m)",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "telecom-postgres" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 10 }, { "color": "red", "value": 50 }] }
+        }
+      },
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT COUNT(*) AS outages_15m FROM regional_outages WHERE created_at >= NOW() - INTERVAL '15 minutes';"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "type": "stat",
+      "title": "Weather-Related Alerts %",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "telecom-postgres" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }, { "color": "orange", "value": 20 }, { "color": "red", "value": 50 }] }
+        }
+      },
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT ROUND(COALESCE(100.0 * SUM(CASE WHEN weather_impact IN ('MEDIUM', 'HIGH') THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 0)::numeric, 1) AS weather_pct FROM realtime_alerts WHERE created_at >= NOW() - INTERVAL '15 minutes';"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "type": "stat",
+      "title": "Avg Network Health Score",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "telecom-postgres" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 1,
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "orange", "value": 65 }, { "color": "green", "value": 80 }] }
+        }
+      },
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT ROUND(AVG(avg_health_score)::numeric, 1) AS network_health FROM operator_performance;"
+        }
+      ]
+    },
+    {
       "id": 1,
       "type": "geomap",
       "title": "Live Tower Alerts Map (Egypt)",
-      "gridPos": { "h": 11, "w": 14, "x": 0, "y": 0 },
+      "gridPos": { "h": 11, "w": 14, "x": 0, "y": 4 },
       "datasource": { "type": "grafana-postgresql-datasource", "uid": "telecom-postgres" },
       "options": {
         "view": { "id": "coords", "lat": 27.0, "lon": 30.8, "zoom": 5.5 },
@@ -47,7 +134,7 @@
       "id": 2,
       "type": "table",
       "title": "Regional Outages (Flink Tumbling Window)",
-      "gridPos": { "h": 11, "w": 10, "x": 14, "y": 0 },
+      "gridPos": { "h": 11, "w": 10, "x": 14, "y": 4 },
       "datasource": { "type": "grafana-postgresql-datasource", "uid": "telecom-postgres" },
       "targets": [
         {
@@ -61,7 +148,7 @@
       "id": 3,
       "type": "table",
       "title": "Live Enriched Alerts (With Weather Impact)",
-      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 11 },
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 15 },
       "datasource": { "type": "grafana-postgresql-datasource", "uid": "telecom-postgres" },
       "targets": [
         {
@@ -75,7 +162,7 @@
       "id": 4,
       "type": "barchart",
       "title": "Operator Performance (dbt + Iceberg Telemetry)",
-      "gridPos": { "h": 9, "w": 8, "x": 0, "y": 20 },
+      "gridPos": { "h": 9, "w": 8, "x": 0, "y": 24 },
       "datasource": { "type": "grafana-postgresql-datasource", "uid": "telecom-postgres" },
       "targets": [
         {
@@ -89,7 +176,7 @@
       "id": 5,
       "type": "table",
       "title": "Lowest Health Towers (dbt Mart)",
-      "gridPos": { "h": 9, "w": 8, "x": 8, "y": 20 },
+      "gridPos": { "h": 9, "w": 8, "x": 8, "y": 24 },
       "datasource": { "type": "grafana-postgresql-datasource", "uid": "telecom-postgres" },
       "targets": [
         {
@@ -103,7 +190,7 @@
       "id": 6,
       "type": "table",
       "title": "Top High-Risk Regions (dbt Regional Risk Index)",
-      "gridPos": { "h": 9, "w": 8, "x": 16, "y": 20 },
+      "gridPos": { "h": 9, "w": 8, "x": 16, "y": 24 },
       "datasource": { "type": "grafana-postgresql-datasource", "uid": "telecom-postgres" },
       "targets": [
         {
